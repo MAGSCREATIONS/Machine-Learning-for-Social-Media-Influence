@@ -12,3 +12,7 @@ print(df.isnull().sum())
 print(df.duplicated().sum())
 df.select_dtypes(include='object').columns
 df.select_dtypes(exclude='object').columns
+
+for col on df.select_dtypes(include = 'object').cloumns:
+  print('\n', col)
+  print(df[col].value_counts().head())

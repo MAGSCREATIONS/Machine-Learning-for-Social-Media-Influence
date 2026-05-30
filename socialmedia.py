@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import warnings as wr
 import seaborn as sns
 
-df = pd.read_csv('data.csv')
+df = pd.read_csv('sm.csv')
 print(df.shape)
 print(df.info())
 print(df.describe())

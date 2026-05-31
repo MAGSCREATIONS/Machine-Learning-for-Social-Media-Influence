@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
 
 DATA_DIR = Path(__file__).resolve().parent
 INPUT_FILE = DATA_DIR / "sm.csv"
@@ -124,6 +126,59 @@ print(df.isnull().sum())
 print("Saving preprocessed data to:", OUTPUT_FILE)
 df.to_csv(OUTPUT_FILE, index=False)
 
+# Split preprocessed data into 80% training and 20% test
+df_train, df_test = train_test_split(df, test_size=0.2, random_state=42)
+
+TRAINING_FILE = DATA_DIR / "sm_training.csv"
+TEST_FILE = DATA_DIR / "sm_test.csv"
+df_train.to_csv(TRAINING_FILE, index=False)
+df_test.to_csv(TEST_FILE, index=False)
+print(f"Saved training data ({len(df_train)} rows) to: {TRAINING_FILE}")
+print(f"Saved testing data ({len(df_test)} rows) to: {TEST_FILE}")
+
+# Standardize numeric features
+df_standardized = df.copy()
+numeric_features = df_standardized.select_dtypes(include=[np.number]).columns
+
+# Replace inf with NaN and then fill NaN values with median
+for col in numeric_features:
+    df_standardized[col] = df_standardized[col].replace([np.inf, -np.inf], np.nan)
+    if df_standardized[col].isnull().any():
+        df_standardized[col] = df_standardized[col].fillna(df_standardized[col].median())
+
+scaler = StandardScaler()
+df_standardized[numeric_features] = scaler.fit_transform(df_standardized[numeric_features])
+
+STANDARDIZED_FILE = DATA_DIR / "sm_standardized.csv"
+print("Saving standardized data to:", STANDARDIZED_FILE)
+df_standardized.to_csv(STANDARDIZED_FILE, index=False)
+
+# Standardize train and test sets separately using the same scaler
+df_train_std = df_train.copy()
+df_test_std = df_test.copy()
+
+# Replace inf with NaN and fill for both train and test
+for col in numeric_features:
+    df_train_std[col] = df_train_std[col].replace([np.inf, -np.inf], np.nan)
+    df_test_std[col] = df_test_std[col].replace([np.inf, -np.inf], np.nan)
+    
+    if df_train_std[col].isnull().any():
+        df_train_std[col] = df_train_std[col].fillna(df_train_std[col].median())
+    if df_test_std[col].isnull().any():
+        df_test_std[col] = df_test_std[col].fillna(df_test_std[col].median())
+
+# Fit scaler on train data and transform both
+scaler_train = StandardScaler()
+df_train_std[numeric_features] = scaler_train.fit_transform(df_train_std[numeric_features])
+df_test_std[numeric_features] = scaler_train.transform(df_test_std[numeric_features])
+
+TRAINING_STD_FILE = DATA_DIR / "sm_training_standardized.csv"
+TEST_STD_FILE = DATA_DIR / "sm_test_standardized.csv"
+df_train_std.to_csv(TRAINING_STD_FILE, index=False)
+df_test_std.to_csv(TEST_STD_FILE, index=False)
+print(f"Saved standardized training data to: {TRAINING_STD_FILE}")
+print(f"Saved standardized testing data to: {TEST_STD_FILE}")
+
 print(df.to_string())
 print("Saving preprocessed data to:", OUTPUT_FILE)
 
@@ -156,4 +211,3 @@ plt.xlabel("Hashtag count")
 plt.ylabel("Count")
 plt.tight_layout()
 plt.show()
-

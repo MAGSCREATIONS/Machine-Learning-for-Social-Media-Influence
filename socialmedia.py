@@ -5,7 +5,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, cross_validate
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 
 DATA_DIR = Path(__file__).resolve().parent
 INPUT_FILE = DATA_DIR / "sm.csv"
@@ -16,7 +18,6 @@ NUMERIC_COLUMNS = [
     "followers",
     "following",
     "likes",
-    "comments",
     "video_view_count",
     "caption_length",
     "hashtag_count",
@@ -24,6 +25,9 @@ NUMERIC_COLUMNS = [
     "post_hour",
     "post_day_of_week",
 ]
+
+TARGET_PERCENTILE = 0.90
+KNN_NEIGHBORS = 5
 
 print("Loading data from:", INPUT_FILE)
 df = pd.read_csv(INPUT_FILE, na_values=NA_VALUES, keep_default_na=True, skipinitialspace=True)
@@ -66,8 +70,12 @@ if "video_view_count" in df.columns:
         video_median = df["video_view_count"].median()
     df.loc[df["video_view_count"] == 0, "video_view_count"] = video_median
 
-# Drop category_name column completely if present
-df = df.drop(columns=["category_name"], errors="ignore")
+# Drop category_name and comments columns completely if present
+# Comments are not used for downstream outputs.
+df = df.drop(columns=["category_name", "comments"], errors="ignore")
+
+# Refresh numeric columns after dropping comments
+current_numeric_columns = [col for col in NUMERIC_COLUMNS if col in df.columns]
 
 # Impute missing values
 numeric_medians = df[current_numeric_columns].median()
@@ -85,15 +93,9 @@ if "video_view_count" in df.columns:
             df["video_view_count"] / df["likes"],
             np.nan,
         )
-    if "comments" in df.columns:
-        df["views_per_comment"] = np.where(
-            df["comments"] != 0,
-            df["video_view_count"] / df["comments"],
-            np.nan,
-        )
     if "followers" in df.columns:
         df["views_per_follower"] = np.where(
-            df["video_view_count"] != 0,
+            df["followers"] > 0,
             df["video_view_count"] / df["followers"],
             np.nan,
         )
@@ -107,13 +109,67 @@ if "video_view_count" in df.columns:
 # Round ratio features to two decimal places
 ratio_cols = [
     "views_per_like",
-    "views_per_comment",
     "views_per_follower",
     "views_per_hashtag",
 ]
 for col in ratio_cols:
     if col in df.columns:
         df[col] = df[col].round(2)
+
+# Fill any ratio NaNs with 0 so KNN can train cleanly
+for col in ratio_cols:
+    if col in df.columns:
+        df[col] = df[col].fillna(0)
+
+# Create virality features and target label
+if {"video_view_count", "likes", "followers"}.issubset(df.columns):
+    df["view_rate"] = np.where(
+        df["followers"] > 0,
+        df["video_view_count"] / df["followers"],
+        0,
+    )
+    df["like_rate"] = np.where(
+        df["followers"] > 0,
+        df["likes"] / df["followers"],
+        0,
+    )
+    df["virality_score"] = (
+        0.65 * np.log1p(df["view_rate"])
+        + 0.35 * np.log1p(df["like_rate"])
+    )
+    virality_threshold = df["virality_score"].quantile(TARGET_PERCENTILE)
+    df["target"] = (df["virality_score"] >= virality_threshold).astype(int)
+    target_percent = round((1.0 - TARGET_PERCENTILE) * 100, 1)
+    print(f"Target threshold for top {target_percent}%: {virality_threshold:.4f}")
+    print(df["target"].value_counts(normalize=True).to_string())
+
+    # Heatmap for virality-related features
+    feature_heatmap_cols = [
+        c for c in [
+            "view_rate",
+            "like_rate",
+            "views_per_like",
+            "views_per_follower",
+            "views_per_hashtag",
+            "virality_score",
+            "target",
+        ]
+        if c in df.columns
+    ]
+    if feature_heatmap_cols:
+        corr_matrix = df[feature_heatmap_cols].corr()
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(
+            corr_matrix,
+            annot=True,
+            fmt=".2f",
+            cmap="coolwarm",
+            linewidths=0.5,
+        )
+        plt.title("Virality feature correlation heatmap")
+        plt.tight_layout()
+        plt.savefig("virality_feature_heatmap.png")
+        plt.show()
 
 # Round integer-like numeric columns to ints
 for col in NUMERIC_COLUMNS:
@@ -136,9 +192,13 @@ df_test.to_csv(TEST_FILE, index=False)
 print(f"Saved training data ({len(df_train)} rows) to: {TRAINING_FILE}")
 print(f"Saved testing data ({len(df_test)} rows) to: {TEST_FILE}")
 
-# Standardize numeric features
+# Standardize numeric features (excluding target label)
 df_standardized = df.copy()
-numeric_features = df_standardized.select_dtypes(include=[np.number]).columns
+numeric_features = [
+    col
+    for col in df_standardized.select_dtypes(include=[np.number]).columns
+    if col != "target"
+]
 
 # Replace inf with NaN and then fill NaN values with median
 for col in numeric_features:
@@ -161,13 +221,13 @@ df_test_std = df_test.copy()
 for col in numeric_features:
     df_train_std[col] = df_train_std[col].replace([np.inf, -np.inf], np.nan)
     df_test_std[col] = df_test_std[col].replace([np.inf, -np.inf], np.nan)
-    
+
     if df_train_std[col].isnull().any():
         df_train_std[col] = df_train_std[col].fillna(df_train_std[col].median())
     if df_test_std[col].isnull().any():
         df_test_std[col] = df_test_std[col].fillna(df_test_std[col].median())
 
-# Fit scaler on train data and transform both
+# Fit scaler on train data and transform both sets
 scaler_train = StandardScaler()
 df_train_std[numeric_features] = scaler_train.fit_transform(df_train_std[numeric_features])
 df_test_std[numeric_features] = scaler_train.transform(df_test_std[numeric_features])
@@ -179,8 +239,55 @@ df_test_std.to_csv(TEST_STD_FILE, index=False)
 print(f"Saved standardized training data to: {TRAINING_STD_FILE}")
 print(f"Saved standardized testing data to: {TEST_STD_FILE}")
 
-print(df.to_string())
-print("Saving preprocessed data to:", OUTPUT_FILE)
+# KNN model training and validation on the standardized 80/20 split
+feature_columns = [col for col in numeric_features if col != "virality_score"]
+if "target" in df_train_std.columns and feature_columns:
+    X_train = df_train_std[feature_columns]
+    y_train = df_train_std["target"].astype(int)
+    X_test = df_test_std[feature_columns]
+    y_test = df_test_std["target"].astype(int)
+
+    print("Training target balance:\n", y_train.value_counts(normalize=True).to_string())
+    print("Testing target balance:\n", y_test.value_counts(normalize=True).to_string())
+
+    knn = KNeighborsClassifier(n_neighbors=KNN_NEIGHBORS)
+    knn.fit(X_train, y_train)
+
+    # Evaluate on test set
+    y_pred = knn.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    report = classification_report(y_test, y_pred, digits=4)
+    cm = confusion_matrix(y_test, y_pred)
+
+    print(f"KNN test accuracy: {accuracy:.4f}")
+    print("KNN classification report:\n", report)
+    print("KNN confusion matrix:\n", cm)
+
+    # Cross-validation on training set
+    cv_results = cross_validate(
+        knn,
+        X_train,
+        y_train,
+        cv=5,
+        scoring=["accuracy", "precision_macro", "recall_macro"],
+        return_train_score=False,
+    )
+    print("KNN cross-validation results:")
+    print(f"  accuracy mean: {cv_results['test_accuracy'].mean():.4f}")
+    print(f"  precision mean: {cv_results['test_precision_macro'].mean():.4f}")
+    print(f"  recall mean: {cv_results['test_recall_macro'].mean():.4f}")
+    print(f"  accuracy std: {cv_results['test_accuracy'].std():.4f}")
+
+    plt.figure(figsize=(6, 4))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
+    plt.title("KNN confusion matrix")
+    plt.xlabel("Predicted")
+    plt.ylabel("Actual")
+    plt.tight_layout()
+    plt.savefig("knn_confusion_matrix.png")
+    plt.show()
+
+print("Preprocessed data saved and KNN validation complete.")
 
 hashtag_counts = df["hashtag_count"].value_counts().nlargest(10)
 
@@ -205,7 +312,11 @@ plt.show()
 
 # Finding top 10 hashtag_count values
 plt.figure(figsize=(10, 6))
-sns.barplot(x=hashtag_counts.index.astype(str), y=hashtag_counts.values, palette="magma")
+plt.bar(
+    hashtag_counts.index.astype(str),
+    hashtag_counts.values,
+    color=sns.color_palette("magma", len(hashtag_counts)),
+)
 plt.title("Top 10 hashtag_count values")
 plt.xlabel("Hashtag count")
 plt.ylabel("Count")

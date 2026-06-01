@@ -7,6 +7,7 @@ import seaborn as sns
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split, cross_validate
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 
 DATA_DIR = Path(__file__).resolve().parent
@@ -65,10 +66,24 @@ for col in current_numeric_columns:
 df = df.drop_duplicates()
 
 if "video_view_count" in df.columns:
-    video_median = df.loc[df["video_view_count"] > 0, "video_view_count"].median()
-    if np.isnan(video_median):
-        video_median = df["video_view_count"].median()
-    df.loc[df["video_view_count"] == 0, "video_view_count"] = video_median
+    if "likes" in df.columns:
+        ratio_mask = (df["likes"] > 0) & (df["video_view_count"] > 0)
+        if ratio_mask.any():
+            view_like_ratio = (
+                df.loc[ratio_mask, "video_view_count"] / df.loc[ratio_mask, "likes"]
+            ).median()
+            print(f"Estimated view-per-like ratio from nonzero likes: {view_like_ratio:.2f}")
+            estimate_mask = (df["video_view_count"] <= 0) & (df["likes"] > 0)
+            df.loc[estimate_mask, "video_view_count"] = (
+                df.loc[estimate_mask, "likes"] * view_like_ratio
+            ).round().astype(int)
+
+    zero_view_mask = df["video_view_count"] <= 0
+    if zero_view_mask.any():
+        video_median = df.loc[df["video_view_count"] > 0, "video_view_count"].median()
+        if np.isnan(video_median):
+            video_median = df["video_view_count"].median()
+        df.loc[zero_view_mask, "video_view_count"] = video_median
 
 # Drop category_name and comments columns completely if present
 # Comments are not used for downstream outputs.
@@ -87,12 +102,6 @@ if "media_type" in df.columns:
 
 # Create ratio features with clear names
 if "video_view_count" in df.columns:
-    if "likes" in df.columns:
-        df["views_per_like"] = np.where(
-            df["likes"] != 0,
-            df["video_view_count"] / df["likes"],
-            np.nan,
-        )
     if "followers" in df.columns:
         df["views_per_follower"] = np.where(
             df["followers"] > 0,
@@ -108,7 +117,6 @@ if "video_view_count" in df.columns:
 
 # Round ratio features to two decimal places
 ratio_cols = [
-    "views_per_like",
     "views_per_follower",
     "views_per_hashtag",
 ]
@@ -123,18 +131,13 @@ for col in ratio_cols:
 
 # Create virality features and target label
 if {"video_view_count", "likes", "followers"}.issubset(df.columns):
-    df["view_rate"] = np.where(
-        df["followers"] > 0,
-        df["video_view_count"] / df["followers"],
-        0,
-    )
     df["like_rate"] = np.where(
         df["followers"] > 0,
         df["likes"] / df["followers"],
         0,
     )
     df["virality_score"] = (
-        0.65 * np.log1p(df["view_rate"])
+        0.65 * np.log1p(df["views_per_follower"])
         + 0.35 * np.log1p(df["like_rate"])
     )
     virality_threshold = df["virality_score"].quantile(TARGET_PERCENTILE)
@@ -146,9 +149,7 @@ if {"video_view_count", "likes", "followers"}.issubset(df.columns):
     # Heatmap for virality-related features
     feature_heatmap_cols = [
         c for c in [
-            "view_rate",
             "like_rate",
-            "views_per_like",
             "views_per_follower",
             "views_per_hashtag",
             "virality_score",
@@ -168,7 +169,8 @@ if {"video_view_count", "likes", "followers"}.issubset(df.columns):
         )
         plt.title("Virality feature correlation heatmap")
         plt.tight_layout()
-        plt.savefig("virality_feature_heatmap.png")
+        heatmap_file = DATA_DIR / "virality_feature_heatmap.png"
+        plt.savefig(heatmap_file)
         plt.show()
 
 # Round integer-like numeric columns to ints
@@ -284,12 +286,27 @@ if "target" in df_train_std.columns and feature_columns:
     plt.xlabel("Predicted")
     plt.ylabel("Actual")
     plt.tight_layout()
-    plt.savefig("knn_confusion_matrix.png")
+    cm_file = DATA_DIR / "knn_confusion_matrix.png"
+    plt.savefig(cm_file)
     plt.show()
 
-print("Preprocessed data saved and KNN validation complete.")
+    # Learn a data-driven virality formula using logistic regression
+    lr_features = [
+        f for f in ["views_per_follower", "like_rate", "views_per_hashtag"]
+        if f in X_train.columns
+    ]
+    if lr_features:
+        lr = LogisticRegression(max_iter=1000)
+        lr.fit(X_train[lr_features], y_train)
+        lr_pred = lr.predict(X_test[lr_features])
+        print("\nLogistic regression on current virality features:")
+        for name, coef in zip(lr_features, lr.coef_[0]):
+            print(f"  {name}: {coef:.4f}")
+        print(f"  intercept: {lr.intercept_[0]:.4f}")
+        print("LR accuracy:", round(accuracy_score(y_test, lr_pred), 4))
+        print("LR classification report:\n", classification_report(y_test, lr_pred, digits=4))
 
-hashtag_counts = df["hashtag_count"].value_counts().nlargest(10)
+print("Preprocessed data saved and KNN validation complete.")
 
 # Pie chart: media type share
 media_counts = (
@@ -297,6 +314,8 @@ media_counts = (
     .map({1: "image", 0: "video"})
     .value_counts()
 )
+
+hashtag_counts = df["hashtag_count"].value_counts().nlargest(10)
 
 plt.figure(figsize=(6, 6))
 media_counts.plot.pie(

@@ -2,7 +2,22 @@
 
 ## What This Script Does
 
-Think of the dataset as a messy notebook full of information. This script acts as a helper that cleans, organizes, and prepares the data before it is used for analysis or machine-learning models.
+Think of the dataset as a messy notebook full of information. This script acts as a helper that cleans, organizes, and prepares the data before it is used for analysis and machine-learning models.
+
+The pipeline performs:
+
+- Data cleaning
+- Feature engineering
+- Virality score generation
+- Target label creation
+- Data standardization
+- Dataset splitting
+- KNN model training
+- Model evaluation
+- Cross-validation
+- Data visualization
+
+---
 
 ## Data Loading
 
@@ -16,12 +31,15 @@ Think of the dataset as a messy notebook full of information. This script acts a
   - `unknown`
   - `Unknown`
 
+---
+
 ## Data Cleaning
 
 ### Removing Unnecessary Columns
 
 - Drops the last two columns of the dataset if they exist.
 - Removes the `category_name` column because it is not required for analysis.
+- Removes the `comments` column because it is not used in feature engineering or model training.
 
 ### Fixing Text Data
 
@@ -29,6 +47,7 @@ Think of the dataset as a messy notebook full of information. This script acts a
 - Standardizes categorical labels to ensure consistency.
 
 Examples:
+
 - `Img` → `image`
 - `image ` → `image`
 - `video ` → `video`
@@ -49,6 +68,8 @@ The cleaned media types are converted into numerical values:
 
 - Identical rows are removed so that each record appears only once.
 
+---
+
 ## Handling Missing Values
 
 ### Numeric Columns
@@ -60,7 +81,6 @@ This applies to columns such as:
 - followers
 - following
 - likes
-- comments
 - video_view_count
 - caption_length
 - hashtag_count
@@ -72,6 +92,8 @@ This applies to columns such as:
 
 Missing values in the `media_type` column are filled using the most common category (mode).
 
+---
+
 ## Handling Video View Counts
 
 Some records may contain a video view count of zero.
@@ -80,6 +102,8 @@ To avoid unrealistic values affecting analysis:
 
 - The script calculates the median of valid video view counts.
 - Any zero value is replaced with this median value.
+
+---
 
 ## Feature Engineering
 
@@ -90,12 +114,6 @@ The script creates additional engagement-related features that may improve machi
 Measures how many views are obtained for each like.
 
 `views_per_like = video_view_count / likes`
-
-### Views Per Comment
-
-Measures how many views are obtained for each comment.
-
-`views_per_comment = video_view_count / comments`
 
 ### Views Per Follower
 
@@ -114,58 +132,228 @@ Measures how many views are obtained per hashtag used.
 - Ratio features are rounded to two decimal places.
 - Numeric columns are converted to integer format where appropriate.
 
+---
+
+## Creating the Virality Target
+
+To train a machine-learning model, the script creates a target variable that identifies whether a post is viral.
+
+### View Rate
+
+Measures how many views a post receives relative to the creator's follower count.
+
+`view_rate = video_view_count / followers`
+
+### Like Rate
+
+Measures how many likes a post receives relative to the creator's follower count.
+
+`like_rate = likes / followers`
+
+### Virality Score
+
+A combined score is calculated using both view rate and like rate.
+
+`virality_score = 0.65 × log(1 + view_rate) + 0.35 × log(1 + like_rate)`
+
+The weights were chosen manually to give greater importance to audience reach while still considering user engagement.
+
+- 65% weight is assigned to view rate.
+- 35% weight is assigned to like rate.
+
+This means that posts reaching a larger audience receive a higher virality score, while likes contribute as a secondary measure of engagement.
+
+The logarithmic transformation (`log(1 + x)`) is used to reduce the effect of extremely large values and create a more balanced scoring system.
+
+### Target Label
+
+The script identifies the top 10% of posts based on their virality score.
+
+- Viral Post = `1`
+- Non-Viral Post = `0`
+
+This target variable is used for machine-learning classification.
+
+---
+
+## Correlation Analysis
+
+The script generates a correlation heatmap for important virality-related features.
+
+Features included:
+
+- view_rate
+- like_rate
+- views_per_like
+- views_per_follower
+- views_per_hashtag
+- virality_score
+- target
+
+The heatmap helps visualize relationships between features and identify which variables are most strongly associated with virality.
+
+Output file:
+
+`virality_feature_heatmap.png`
+
+---
+
 ## Data Export
 
-After preprocessing is complete:
+The script generates several output files:
 
-- The cleaned dataset is saved as `sm_preprocessed.csv`.
+- `sm_preprocessed.csv`
+- `sm_training.csv`
+- `sm_test.csv`
+- `sm_standardized.csv`
+- `sm_training_standardized.csv`
+- `sm_test_standardized.csv`
 
-This file is then used for further analysis, visualization, and machine-learning tasks.
+These files are used for machine-learning training, testing, and evaluation.
+
+---
+
+## Dataset Splitting
+
+The dataset is divided into:
+
+- 80% Training Data
+- 20% Testing Data
+
+The training dataset is used for model training, while the testing dataset is used for model evaluation.
+
+---
+
+## Data Standardization
+
+Machine-learning algorithms such as K-Nearest Neighbors perform better when all features are on a similar scale.
+
+The script applies Standardization using Scikit-Learn's `StandardScaler`.
+
+### What Standardization Does
+
+For each numerical feature:
+
+1. The mean is subtracted.
+2. The result is divided by the standard deviation.
+
+Formula:
+
+`z = (x - mean) / standard deviation`
+
+After standardization:
+
+- Mean becomes approximately 0.
+- Standard deviation becomes approximately 1.
+
+---
+
+## K-Nearest Neighbors (KNN) Classification
+
+The project uses the K-Nearest Neighbors (KNN) algorithm to predict whether a social media post is viral.
+
+### Why KNN?
+
+KNN classifies a new data point by examining the classes of its nearest neighbors.
+
+In this project:
+
+- Number of Neighbors (K) = 5
+- Viral Posts = 1
+- Non-Viral Posts = 0
+
+### Training Process
+
+The model is trained using the standardized training dataset.
+
+The target variable is:
+
+`target`
+
+---
+
+## Model Evaluation
+
+The trained KNN model is evaluated using the testing dataset.
+
+The following performance metrics are calculated:
+
+### Accuracy
+
+Measures the percentage of correct predictions.
+
+### Precision
+
+Measures how many posts predicted as viral were actually viral.
+
+### Recall
+
+Measures how many actual viral posts were correctly identified.
+
+### Classification Report
+
+Provides a detailed summary of:
+
+- Precision
+- Recall
+- F1-Score
+- Support
+
+for each class.
+
+### Confusion Matrix
+
+A confusion matrix is generated to compare:
+
+- Actual labels
+- Predicted labels
+
+Output file:
+
+`knn_confusion_matrix.png`
+
+---
+
+## Cross-Validation
+
+To verify that the model performs consistently, 5-fold cross-validation is performed on the training data.
+
+The script calculates:
+
+- Mean Accuracy
+- Mean Precision
+- Mean Recall
+- Accuracy Standard Deviation
+
+Cross-validation provides a more reliable estimate of model performance than a single train-test split.
+
+---
 
 ## Data Visualization
 
 The script generates the following visualizations:
 
-### 1. Media Type Distribution
+### 1. Virality Feature Correlation Heatmap
 
-A pie chart showing the proportion of:
+Shows relationships between virality-related features.
 
-- Image posts
-- Video posts
+### 2. KNN Confusion Matrix
 
-This helps understand the overall content distribution.
+Shows model prediction performance.
 
-### 2. Top 10 Hashtag Counts
+### 3. Media Type Distribution Pie Chart
 
-A bar chart displaying:
+Shows the percentage of image posts and video posts.
 
-- The ten most common hashtag counts
-- Their frequencies within the dataset
+### 4. Top 10 Hashtag Count Bar Chart
 
-This helps identify hashtag usage patterns.
+Displays the most frequently occurring hashtag counts in the dataset.
 
-## Why the Previous Version Had a Problem
-
-The earlier version of the script recognized values such as:
-
-- `NA`
-- `NULL`
-- `null`
-
-as missing data.
-
-However, it did not recognize:
-
-- `unknown`
-- `Unknown`
-
-As a result, these values were treated as normal text instead of missing information. Because of this, some records were not cleaned or filled correctly.
-
-The updated version now recognizes both `unknown` and `Unknown` as missing values, ensuring that they are processed correctly during data cleaning.
+---
 
 ## Final Outcome
 
-After preprocessing, the dataset becomes:
+After processing, the dataset becomes:
 
 - Cleaner
 - More consistent
@@ -173,4 +361,4 @@ After preprocessing, the dataset becomes:
 - Properly formatted
 - Suitable for machine-learning applications
 
-The added engagement features and improved handling of missing values help produce more reliable analysis and better predictive models.
+The complete pipeline prepares the data, generates a virality target, trains a KNN classifier, evaluates its performance, and predicts whether social media posts are likely to be viral or non-viral.

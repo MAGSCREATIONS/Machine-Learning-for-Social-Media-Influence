@@ -12,9 +12,11 @@ The pipeline performs:
 - Target label creation
 - Data standardization
 - Dataset splitting
+- K-Means clustering
 - KNN model training
 - Model evaluation
 - Cross-validation
+- Logistic Regression analysis
 - Data visualization
 
 ---
@@ -100,20 +102,15 @@ Some records may contain a video view count of zero.
 
 To avoid unrealistic values affecting analysis:
 
-- The script calculates the median of valid video view counts.
-- Any zero value is replaced with this median value.
+- A view-per-like ratio is estimated from valid records.
+- Missing or zero view counts are estimated where possible.
+- Remaining zero values are replaced using the median view count.
 
 ---
 
 ## Feature Engineering
 
-The script creates additional engagement-related features that may improve machine-learning performance.
-
-### Views Per Like
-
-Measures how many views are obtained for each like.
-
-`views_per_like = video_view_count / likes`
+The script creates additional engagement-related features.
 
 ### Views Per Follower
 
@@ -130,19 +127,14 @@ Measures how many views are obtained per hashtag used.
 ### Feature Formatting
 
 - Ratio features are rounded to two decimal places.
+- Missing ratio values are replaced with 0.
 - Numeric columns are converted to integer format where appropriate.
 
 ---
 
 ## Creating the Virality Target
 
-To train a machine-learning model, the script creates a target variable that identifies whether a post is viral.
-
-### View Rate
-
-Measures how many views a post receives relative to the creator's follower count.
-
-`view_rate = video_view_count / followers`
+The script creates a target variable that identifies whether a post is viral.
 
 ### Like Rate
 
@@ -154,25 +146,16 @@ Measures how many likes a post receives relative to the creator's follower count
 
 A combined score is calculated using both view rate and like rate.
 
-`virality_score = 0.65 × log(1 + view_rate) + 0.35 × log(1 + like_rate)`
+`virality_score = 0.65 × log(1 + views_per_follower) + 0.35 × log(1 + like_rate)`
 
-The weights were chosen manually to give greater importance to audience reach while still considering user engagement.
-
-- 65% weight is assigned to view rate.
-- 35% weight is assigned to like rate.
-
-This means that posts reaching a larger audience receive a higher virality score, while likes contribute as a secondary measure of engagement.
-
-The logarithmic transformation (`log(1 + x)`) is used to reduce the effect of extremely large values and create a more balanced scoring system.
+The logarithmic transformation reduces the impact of extreme values and creates a more balanced scoring system.
 
 ### Target Label
 
-The script identifies the top 10% of posts based on their virality score.
+The top 10% of posts based on virality score are labeled as viral.
 
 - Viral Post = `1`
 - Non-Viral Post = `0`
-
-This target variable is used for machine-learning classification.
 
 ---
 
@@ -182,15 +165,11 @@ The script generates a correlation heatmap for important virality-related featur
 
 Features included:
 
-- view_rate
 - like_rate
-- views_per_like
 - views_per_follower
 - views_per_hashtag
 - virality_score
 - target
-
-The heatmap helps visualize relationships between features and identify which variables are most strongly associated with virality.
 
 Output file:
 
@@ -200,7 +179,7 @@ Output file:
 
 ## Data Export
 
-The script generates several output files:
+The script generates the following files:
 
 - `sm_preprocessed.csv`
 - `sm_training.csv`
@@ -208,8 +187,6 @@ The script generates several output files:
 - `sm_standardized.csv`
 - `sm_training_standardized.csv`
 - `sm_test_standardized.csv`
-
-These files are used for machine-learning training, testing, and evaluation.
 
 ---
 
@@ -220,22 +197,11 @@ The dataset is divided into:
 - 80% Training Data
 - 20% Testing Data
 
-The training dataset is used for model training, while the testing dataset is used for model evaluation.
-
 ---
 
 ## Data Standardization
 
-Machine-learning algorithms such as K-Nearest Neighbors perform better when all features are on a similar scale.
-
-The script applies Standardization using Scikit-Learn's `StandardScaler`.
-
-### What Standardization Does
-
-For each numerical feature:
-
-1. The mean is subtracted.
-2. The result is divided by the standard deviation.
+The project uses Scikit-Learn's `StandardScaler` to standardize numerical features.
 
 Formula:
 
@@ -243,70 +209,71 @@ Formula:
 
 After standardization:
 
-- Mean becomes approximately 0.
-- Standard deviation becomes approximately 1.
+- Mean ≈ 0
+- Standard Deviation ≈ 1
+
+This improves the performance of distance-based algorithms such as KNN and K-Means.
+
+---
+
+## K-Means Clustering
+
+The project performs unsupervised learning using K-Means clustering.
+
+### Purpose
+
+Groups similar social media posts together based on their numerical characteristics.
+
+### Cluster Selection
+
+- Tests values of `k` from 2 to 10.
+- Calculates inertia for each value.
+- Uses the elbow method to automatically select the optimal number of clusters.
+
+### Output
+
+`kmeans_elbow.png`
+
+### Final Clustering
+
+The selected K-Means model is fitted on the standardized training data and cluster labels are assigned to both training and testing datasets.
 
 ---
 
 ## K-Nearest Neighbors (KNN) Classification
 
-The project uses the K-Nearest Neighbors (KNN) algorithm to predict whether a social media post is viral.
+The project uses the KNN algorithm to predict whether a social media post is viral.
 
-### Why KNN?
+### Automatic K Selection
 
-KNN classifies a new data point by examining the classes of its nearest neighbors.
+The script tests:
 
-In this project:
+`k = 1` to `k = 20`
 
-- Number of Neighbors (K) = 5
-- Viral Posts = 1
-- Non-Viral Posts = 0
+The value producing the highest test accuracy is selected automatically.
+
+### Output
+
+`knn_k_vs_accuracy.png`
 
 ### Training Process
 
-The model is trained using the standardized training dataset.
+The model is trained using the standardized training dataset and predicts:
 
-The target variable is:
-
-`target`
+- Viral Posts (`1`)
+- Non-Viral Posts (`0`)
 
 ---
 
 ## Model Evaluation
 
-The trained KNN model is evaluated using the testing dataset.
+The trained KNN model is evaluated using:
 
-The following performance metrics are calculated:
-
-### Accuracy
-
-Measures the percentage of correct predictions.
-
-### Precision
-
-Measures how many posts predicted as viral were actually viral.
-
-### Recall
-
-Measures how many actual viral posts were correctly identified.
-
-### Classification Report
-
-Provides a detailed summary of:
-
+- Accuracy
 - Precision
 - Recall
 - F1-Score
-- Support
-
-for each class.
-
-### Confusion Matrix
-
-A confusion matrix is generated to compare:
-
-- Actual labels
-- Predicted labels
+- Confusion Matrix
 
 Output file:
 
@@ -316,16 +283,35 @@ Output file:
 
 ## Cross-Validation
 
-To verify that the model performs consistently, 5-fold cross-validation is performed on the training data.
+To verify model consistency, 5-fold cross-validation is performed.
 
-The script calculates:
+Metrics calculated:
 
 - Mean Accuracy
 - Mean Precision
 - Mean Recall
 - Accuracy Standard Deviation
 
-Cross-validation provides a more reliable estimate of model performance than a single train-test split.
+---
+
+## Logistic Regression Analysis
+
+A Logistic Regression model is trained to understand which features contribute most to virality.
+
+### Features Used
+
+- views_per_follower
+- like_rate
+- views_per_hashtag
+
+### Output
+
+The script prints:
+
+- Feature coefficients
+- Model intercept
+- Accuracy
+- Classification report
 
 ---
 
@@ -333,32 +319,95 @@ Cross-validation provides a more reliable estimate of model performance than a s
 
 The script generates the following visualizations:
 
-### 1. Virality Feature Correlation Heatmap
-
-Shows relationships between virality-related features.
-
-### 2. KNN Confusion Matrix
-
-Shows model prediction performance.
-
-### 3. Media Type Distribution Pie Chart
-
-Shows the percentage of image posts and video posts.
-
-### 4. Top 10 Hashtag Count Bar Chart
-
-Displays the most frequently occurring hashtag counts in the dataset.
+1. Virality Feature Correlation Heatmap
+2. K-Means Elbow Plot
+3. KNN Accuracy vs K Plot
+4. KNN Confusion Matrix
+5. Media Type Distribution Pie Chart
+6. Top 10 Hashtag Count Bar Chart
 
 ---
 
-## Final Outcome
+## Generated Output Files
 
-After processing, the dataset becomes:
+### Processed Datasets
 
-- Cleaner
-- More consistent
-- Free of duplicate records
-- Properly formatted
-- Suitable for machine-learning applications
+- `sm_preprocessed.csv`
+- `sm_training.csv`
+- `sm_test.csv`
+- `sm_standardized.csv`
+- `sm_training_standardized.csv`
+- `sm_test_standardized.csv`
 
-The complete pipeline prepares the data, generates a virality target, trains a KNN classifier, evaluates its performance, and predicts whether social media posts are likely to be viral or non-viral.
+### Visualizations
+
+- `virality_feature_heatmap.png`
+- `kmeans_elbow.png`
+- `knn_k_vs_accuracy.png`
+- `knn_confusion_matrix.png`
+
+---
+
+## Libraries Used
+
+- NumPy
+- Pandas
+- Matplotlib
+- Seaborn
+- Scikit-Learn
+- pathlib
+
+Install dependencies:
+
+```bash
+pip install numpy pandas matplotlib seaborn scikit-learn
+```
+
+---
+
+## Project Workflow
+
+```text
+Raw Dataset (sm.csv)
+        │
+        ▼
+Data Cleaning
+        │
+        ▼
+Missing Value Handling
+        │
+        ▼
+Feature Engineering
+        │
+        ▼
+Virality Score Generation
+        │
+        ▼
+Target Label Creation
+        │
+        ▼
+Train-Test Split (80/20)
+        │
+        ▼
+Standardization
+        │
+ ┌──────┴─────────┐
+ ▼                ▼
+K-Means       KNN Classifier
+Clustering    Training
+ ▼                ▼
+Cluster      Prediction
+Analysis     Evaluation
+                  ▼
+         Cross-Validation
+                  ▼
+        Logistic Regression
+                  ▼
+            Visualizations
+```
+
+---
+
+## Conclusion
+
+This project builds a complete machine-learning pipeline for social media influence analysis. It cleans and preprocesses raw data, creates engagement-based features, generates a virality score, and predicts whether a post is viral. The workflow combines K-Means clustering, KNN classification, Logistic Regression, and visualizations to provide both predictive performance and insights into social media engagement patterns.

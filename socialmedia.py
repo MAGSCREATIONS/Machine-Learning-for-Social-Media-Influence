@@ -9,6 +9,7 @@ from sklearn.model_selection import train_test_split, cross_validate
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.cluster import KMeans
 
 DATA_DIR = Path(__file__).resolve().parent
 INPUT_FILE = DATA_DIR / "sm.csv"
@@ -241,6 +242,51 @@ df_test_std.to_csv(TEST_STD_FILE, index=False)
 print(f"Saved standardized training data to: {TRAINING_STD_FILE}")
 print(f"Saved standardized testing data to: {TEST_STD_FILE}")
 
+# KMeans clustering analysis on standardized training data (use inertia elbow only)
+cluster_features = [col for col in numeric_features if col != "virality_score"]
+if cluster_features:
+    X_clust = df_train_std[cluster_features]
+    ks = list(range(2, 11))
+    inertias = []
+    for k in ks:
+        kmeans_tmp = KMeans(n_clusters=k, random_state=42, n_init=10)
+        kmeans_tmp.fit(X_clust)
+        inertias.append(kmeans_tmp.inertia_)
+
+    # Geometric elbow detection: choose k with max distance to line between first and last points
+    x = np.array(ks)
+    y = np.array(inertias)
+    x1, y1 = x[0], y[0]
+    x2, y2 = x[-1], y[-1]
+    denom = np.sqrt((y2 - y1) ** 2 + (x2 - x1) ** 2)
+    if denom == 0:
+        best_k_inertia = ks[0]
+    else:
+        distances = np.abs((y2 - y1) * x - (x2 - x1) * y + x2 * y1 - y2 * x1) / denom
+        best_k_inertia = ks[int(np.argmax(distances))]
+
+    print(f"KMeans: best k by inertia elbow: {best_k_inertia}")
+
+    plt.figure(figsize=(8, 4))
+    plt.plot(ks, inertias, marker='o')
+    plt.title('KMeans inertia (elbow)')
+    plt.xlabel('k')
+    plt.ylabel('Inertia')
+    plt.xticks(ks)
+    plt.grid(True)
+    elbow_file = DATA_DIR / 'kmeans_elbow.png'
+    plt.tight_layout()
+    plt.savefig(elbow_file)
+    plt.show()
+
+    # Fit final KMeans and attach cluster labels to standardized train/test
+    final_kmeans = KMeans(n_clusters=best_k_inertia, random_state=42, n_init=10)
+    final_kmeans.fit(X_clust)
+    df_train_std['cluster'] = final_kmeans.labels_
+    df_test_std['cluster'] = final_kmeans.predict(df_test_std[cluster_features])
+    print('KMeans cluster counts (train):')
+    print(df_train_std['cluster'].value_counts().to_string())
+
 # KNN model training and validation on the standardized 80/20 split
 feature_columns = [col for col in numeric_features if col != "virality_score"]
 if "target" in df_train_std.columns and feature_columns:
@@ -252,7 +298,32 @@ if "target" in df_train_std.columns and feature_columns:
     print("Training target balance:\n", y_train.value_counts(normalize=True).to_string())
     print("Testing target balance:\n", y_test.value_counts(normalize=True).to_string())
 
-    knn = KNeighborsClassifier(n_neighbors=KNN_NEIGHBORS)
+    # Plot K versus test accuracy to choose a good neighbor count
+    k_values = list(range(1, 21))
+    k_accuracies = []
+    for k in k_values:
+        k_model = KNeighborsClassifier(n_neighbors=k)
+        k_model.fit(X_train, y_train)
+        k_accuracies.append(accuracy_score(y_test, k_model.predict(X_test)))
+
+    best_k = k_values[int(np.argmax(k_accuracies))]
+    best_k_accuracy = max(k_accuracies)
+    print(f"Best k by test accuracy: {best_k} ({best_k_accuracy:.4f})")
+
+    plt.figure(figsize=(8, 4))
+    plt.plot(k_values, k_accuracies, marker="o", linestyle="-")
+    plt.title("KNN test accuracy by k")
+    plt.xlabel("k (neighbors)")
+    plt.ylabel("Test accuracy")
+    plt.xticks(k_values)
+    plt.grid(True)
+    plt.tight_layout()
+    k_curve_file = DATA_DIR / "knn_k_vs_accuracy.png"
+    plt.savefig(k_curve_file)
+    plt.show()
+
+    # Use the best k found from the validation loop above
+    knn = KNeighborsClassifier(n_neighbors=best_k)
     knn.fit(X_train, y_train)
 
     # Evaluate on test set

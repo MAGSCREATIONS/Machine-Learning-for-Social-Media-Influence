@@ -7,8 +7,7 @@ import seaborn as sns
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split, cross_validate
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, silhouette_score
 from sklearn.cluster import KMeans
 
 DATA_DIR = Path(__file__).resolve().parent
@@ -242,50 +241,179 @@ df_test_std.to_csv(TEST_STD_FILE, index=False)
 print(f"Saved standardized training data to: {TRAINING_STD_FILE}")
 print(f"Saved standardized testing data to: {TEST_STD_FILE}")
 
-# KMeans clustering analysis on standardized training data (use inertia elbow only)
+# KMeans clustering analysis on standardized training data
 cluster_features = [col for col in numeric_features if col != "virality_score"]
 if cluster_features:
+
+    print("\nStarting Unsupervised Learning (K-Means Clustering)...")
+
     X_clust = df_train_std[cluster_features]
+
+    # -------------------------------
+    # Elbow Method
+    # -------------------------------
+
     ks = list(range(2, 11))
     inertias = []
-    for k in ks:
-        kmeans_tmp = KMeans(n_clusters=k, random_state=42, n_init=10)
-        kmeans_tmp.fit(X_clust)
-        inertias.append(kmeans_tmp.inertia_)
 
-    # Geometric elbow detection: choose k with max distance to line between first and last points
+    for k in ks:
+        model = KMeans(
+            n_clusters=k,
+            random_state=42,
+            n_init=10
+        )
+
+        model.fit(X_clust)
+        inertias.append(model.inertia_)
+
+    # Geometric elbow detection (max distance to line between endpoints)
     x = np.array(ks)
     y = np.array(inertias)
     x1, y1 = x[0], y[0]
     x2, y2 = x[-1], y[-1]
     denom = np.sqrt((y2 - y1) ** 2 + (x2 - x1) ** 2)
     if denom == 0:
-        best_k_inertia = ks[0]
+        elbow_idx = 0
+        elbow_k = ks[elbow_idx]
     else:
         distances = np.abs((y2 - y1) * x - (x2 - x1) * y + x2 * y1 - y2 * x1) / denom
-        best_k_inertia = ks[int(np.argmax(distances))]
+        elbow_idx = int(np.argmax(distances))
+        elbow_k = ks[elbow_idx]
 
-    print(f"KMeans: best k by inertia elbow: {best_k_inertia}")
+    elbow_inertia = inertias[elbow_idx]
 
-    plt.figure(figsize=(8, 4))
-    plt.plot(ks, inertias, marker='o')
-    plt.title('KMeans inertia (elbow)')
-    plt.xlabel('k')
-    plt.ylabel('Inertia')
+    # Plot inertia with highlighted elbow
+    plt.figure(figsize=(10, 5), dpi=120)
+    plt.plot(ks, inertias, marker="o", linewidth=2, markersize=8)
+    plt.scatter([elbow_k], [elbow_inertia], s=160, color="red", zorder=5)
+    plt.axvline(elbow_k, color="red", linestyle="--", alpha=0.7)
+    plt.title("Elbow Method for Optimal K (highlighted)")
+    plt.xlabel("Number of Clusters (K)")
+    plt.ylabel("Inertia")
     plt.xticks(ks)
-    plt.grid(True)
-    elbow_file = DATA_DIR / 'kmeans_elbow.png'
+    plt.grid(True, linestyle="--", alpha=0.6)
+
+    # Annotate elbow point
+    try:
+        plt.annotate(
+            f"Elbow k={elbow_k}",
+            xy=(elbow_k, elbow_inertia),
+            xytext=(elbow_k + 0.5, elbow_inertia * 1.02),
+            arrowprops=dict(arrowstyle="->", color="red"),
+            color="red",
+            fontsize=10,
+        )
+    except Exception:
+        pass
+
+    elbow_file = DATA_DIR / "kmeans_elbow.png"
     plt.tight_layout()
-    plt.savefig(elbow_file)
+    plt.savefig(elbow_file, dpi=150)
     plt.show()
 
-    # Fit final KMeans and attach cluster labels to standardized train/test
-    final_kmeans = KMeans(n_clusters=best_k_inertia, random_state=42, n_init=10)
+    # -------------------------------
+    # Choose Best K using Silhouette
+    # -------------------------------
+
+    best_k = 2
+    best_score = -1
+
+    for k in range(2, 11):
+
+        model = KMeans(
+            n_clusters=k,
+            random_state=42,
+            n_init=10
+        )
+
+        labels = model.fit_predict(X_clust)
+
+        score = silhouette_score(X_clust, labels)
+
+        print(f"K={k} | Silhouette Score={score:.4f}")
+
+        if score > best_score:
+            best_score = score
+            best_k = k
+
+    print(f"\nBest K selected: {best_k}")
+    print(f"Best Silhouette Score: {best_score:.4f}")
+
+    # -------------------------------
+    # Final KMeans Model
+    # -------------------------------
+
+    final_kmeans = KMeans(
+        n_clusters=best_k,
+        random_state=42,
+        n_init=10
+    )
+
     final_kmeans.fit(X_clust)
-    df_train_std['cluster'] = final_kmeans.labels_
-    df_test_std['cluster'] = final_kmeans.predict(df_test_std[cluster_features])
-    print('KMeans cluster counts (train):')
-    print(df_train_std['cluster'].value_counts().to_string())
+
+    df_train_std["cluster"] = final_kmeans.labels_
+
+    df_test_std["cluster"] = final_kmeans.predict(
+        df_test_std[cluster_features]
+    )
+
+    # -------------------------------
+    # Cluster Distribution
+    # -------------------------------
+
+    print("\nCluster Counts:")
+    print(df_train_std["cluster"].value_counts())
+
+    # -------------------------------
+    # Cluster Summary
+    # -------------------------------
+
+    cluster_summary = (
+        df_train_std
+        .groupby("cluster")
+        .mean(numeric_only=True)
+    )
+
+    print("\nCluster Summary:")
+    print(cluster_summary)
+
+    cluster_summary.to_csv(
+        DATA_DIR / "cluster_summary.csv"
+    )
+
+    # -------------------------------
+    # Cluster Visualization
+    # -------------------------------
+
+    if len(cluster_features) >= 2:
+
+        plt.figure(figsize=(8,6))
+
+        scatter = plt.scatter(
+            X_clust.iloc[:,0],
+            X_clust.iloc[:,1],
+            c=df_train_std["cluster"],
+            cmap="viridis",
+            alpha=0.7
+        )
+
+        plt.xlabel(cluster_features[0])
+        plt.ylabel(cluster_features[1])
+        plt.title("K-Means Cluster Visualization")
+
+        plt.colorbar(scatter)
+
+        plt.tight_layout()
+
+        cluster_plot = (
+            DATA_DIR /
+            "cluster_visualization.png"
+        )
+
+        plt.savefig(cluster_plot)
+        plt.show()
+
+    print("\nUnsupervised Learning Complete.")
 
 # KNN model training and validation on the standardized 80/20 split
 feature_columns = [col for col in numeric_features if col != "virality_score"]
@@ -361,21 +489,7 @@ if "target" in df_train_std.columns and feature_columns:
     plt.savefig(cm_file)
     plt.show()
 
-    # Learn a data-driven virality formula using logistic regression
-    lr_features = [
-        f for f in ["views_per_follower", "like_rate", "views_per_hashtag"]
-        if f in X_train.columns
-    ]
-    if lr_features:
-        lr = LogisticRegression(max_iter=1000)
-        lr.fit(X_train[lr_features], y_train)
-        lr_pred = lr.predict(X_test[lr_features])
-        print("\nLogistic regression on current virality features:")
-        for name, coef in zip(lr_features, lr.coef_[0]):
-            print(f"  {name}: {coef:.4f}")
-        print(f"  intercept: {lr.intercept_[0]:.4f}")
-        print("LR accuracy:", round(accuracy_score(y_test, lr_pred), 4))
-        print("LR classification report:\n", classification_report(y_test, lr_pred, digits=4))
+    # (Logistic regression removed - using KNN for classification)
 
 print("Preprocessed data saved and KNN validation complete.")
 
@@ -412,3 +526,5 @@ plt.xlabel("Hashtag count")
 plt.ylabel("Count")
 plt.tight_layout()
 plt.show()
+
+

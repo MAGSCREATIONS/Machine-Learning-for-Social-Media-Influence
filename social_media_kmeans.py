@@ -14,7 +14,7 @@ from sklearn.metrics import silhouette_score
 # =====================================================
 
 DATA_DIR = Path(__file__).resolve().parent
-INPUT_FILE = DATA_DIR / "sm.csv"
+INPUT_FILE = DATA_DIR / "social_media_messy_1000_students.csv"
 
 print("Loading Dataset...")
 
